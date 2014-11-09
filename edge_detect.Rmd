@@ -1,0 +1,107 @@
+---
+title: ""
+runtime: shiny
+output: html_document
+---
+
+```{r, echo=F, message=F, warning=F, error=F, results='hide'}
+library("jpeg")
+library("png")
+library("abind")
+
+offset <- function(image,x=0,y=0)
+{
+  x.min <- max(1, 1+x)
+  x.max <- min(ncol(image), ncol(image)+x)
+  y.min <- max(1, 1+y)
+  y.max <- min(nrow(image), nrow(image)+y)
+  
+  x2.min <- max(1, 1-x)
+  x2.max <- min(ncol(image), ncol(image)-x)
+  y2.min <- max(1, 1-y)
+  y2.max <- min(nrow(image), nrow(image)-y)
+  
+  new.image <- image
+  new.image[y.min:y.max, x.min:x.max] <- new.image[y2.min:y2.max, x2.min:x2.max]
+  
+  return(new.image) 
+}
+
+upload.image <- function(image.path, max.size)
+{
+  image <- readJPEG(image.path)
+  image <- (0.2126*image[,,1] + 0.7152*image[,,2] + 0.0722*image[,,3])
+  
+  if(max(ncol(image),nrow(image))>max.size)
+  {
+    factor <- max(ncol(image),nrow(image))/x
+    xmax <- floor(ncol(image)/factor)
+    ymax <- floor(nrow(image)/factor)
+    image <- image[seq(1,nrow(image),length.out=ymax),]
+    image <- image[,seq(1,ncol(image),length.out=xmax)]
+  }
+
+  return(image)
+}
+
+process.image <- function(image, offsets=8, n=1, m=1, blend="mean")
+{
+  offsets.x <- c(-1,-1,-1,0,0,1,1,1)
+  offsets.y <- c(-1,0,1,1,-1,-1,0,1)
+  
+  offsets <- cbind(offsets.x,offsets.y)[1:offsets,]
+  offsets <- as.list(as.data.frame(t(offsets)))
+
+  image.list <- lapply(offsets, FUN=function(x){offset(image, x[1], x[2])})
+  image.list <- lapply(image.list, FUN=function(x){1-(x-image)})
+  image.matrix <- do.call(abind,c(image.list,list(along=3)))
+  if(blend=="mean")
+    image.new <- apply(image.matrix, c(1,2), FUN=function(x){mean(x^n)^m})
+  if(blend=="median")
+    image.new <- apply(image.matrix, c(1,2), FUN=function(x){median(x^n)^m})
+  if(blend=="min")
+    image.new <- apply(image.matrix, c(1,2), FUN=function(x){min(x^n)^m})
+  if(blend=="max")
+    image.new <- apply(image.matrix, c(1,2), FUN=function(x){max(x^n)^m})
+  image.new[image.new>1] <- 1
+  return(image.new)
+}
+```
+
+```{r, echo=FALSE}
+x <- 500
+
+sidebarPanel(
+  fileInput("image", label="Upload an image", multiple=F, accept="image/jpeg"),
+  sliderInput("m", "Contrast", min=0, max=20, step=0.1, round=F, value=2, ticks=F),
+  sliderInput("n", "Detail", min=0, max=20, step=0.1, round=F, value=2, ticks=F),
+  sliderInput("offsets", "Offsets", min=2, max=8, step=1, value=4),
+  selectInput("blend", "Blend Method", choices=c("Mean"="mean","Median"="median","Min"="min","Max"="max"), multiple=F, selected="mean")
+, width=3)
+
+get.image <- reactive({upload.image(input$image$datapath, max.size=x)})
+
+renderPlot({
+  par(mar=c(0,0,0,0))
+  plot(0, 0, type="n", xlim=c(0,x), ylim=c(0,x), xaxs="i", yaxs="i", yaxt="n", xaxt="n", frame=F)
+  image <- NULL
+  try(image <- process.image(get.image(), m=input$m, n=input$n, offsets=input$offsets, blend=input$blend))
+  
+  if(!is.null(image))
+  {
+    if(max(ncol(image),nrow(image))>x)
+      {
+      factor <- max(ncol(image),nrow(image))/x
+      xmax <- ncol(image)/factor
+      ymax <- nrow(image)/factor
+      }
+    else
+      {
+        xmax <- ncol(image)
+        ymax <- nrow(image)
+      }
+    rasterImage(image, x/2-xmax/2, x/2-ymax/2, x/2+xmax/2, x/2+ymax/2)
+  }
+}, width=x, height=x)
+```
+
